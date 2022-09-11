@@ -135,6 +135,15 @@ public:
                                            float depth_max = 3.0f,
                                            float trunc_voxel_multiplier = 8.0);
 
+    core::Tensor GetUniqueBlockCoordinatesPerception(const Image &depth,
+                                           const Image &probabilities,
+                                           const core::Tensor &intrinsic,
+                                           const core::Tensor &extrinsic,
+                                           float depth_scale = 1000.0f,
+                                           float depth_max = 3.0f,
+                                           float trunc_voxel_multiplier = 8.0,
+                                           float min_probability = 0.1);
+
     core::Tensor UnseenFrustumGetUniqueBlockCoordinates(
             const Image &depth,
             const core::Tensor &intrinsic,

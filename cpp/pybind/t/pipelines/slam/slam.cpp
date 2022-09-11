@@ -74,9 +74,12 @@ void pybind_slam_model(py::module &m) {
     py::detail::bind_copy_functions<Model>(model);
 
     model.def(py::init<>());
-    model.def(py::init<float, int, int, int, core::Tensor, core::Device>(),
-              "Constructor of a VoxelBlockGrid", "voxel_size"_a,
+    model.def(py::init<float, int, int, float, int, int, int, core::Tensor, core::Device>(),
+              "Constructor of a VoxelBlockGrid",
+              "voxel_size"_a,
               "block_resolution"_a = 16, " block_count"_a = 10000,
+              "voxel_size_detection"_a = 0.01,
+              "block_resolution_detection"_a = 16, " est_block_count_detection"_a = 10000,
               "classes"_a = 3,
               "transformation"_a = core::Tensor::Eye(4, core::Float64,
                                                      core::Device("CPU:0")),
@@ -108,7 +111,8 @@ void pybind_slam_model(py::module &m) {
               py::call_guard<py::gil_scoped_release>(),
               "Integrate an input frame to a volume.", "input_frame"_a,
               "depth_scale"_a = 1000.0, "depth_max"_a = 3.0,
-              "trunc_voxel_multiplier"_a = 8.0);
+              "trunc_voxel_multiplier"_a = 8.0,
+              "min_probability"_a = 0.1);
     docstring::ClassMethodDocInject(m, "Model", "integrate",
                                     map_shared_argument_docstrings);
 

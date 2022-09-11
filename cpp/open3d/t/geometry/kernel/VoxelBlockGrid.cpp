@@ -85,6 +85,25 @@ void DepthTouch(std::shared_ptr<core::HashMap>& hashmap,
     }
 }
 
+void DepthTouchPerception(std::shared_ptr<core::HashMap>& hashmap,
+                const core::Tensor& depth,
+                const core::Tensor& probabilities,
+                const core::Tensor& intrinsic,
+                const core::Tensor& extrinsic,
+                core::Tensor& voxel_block_coords,
+                index_t voxel_grid_resolution,
+                float voxel_size,
+                float sdf_trunc,
+                float depth_scale,
+                float depth_max,
+                index_t stride,
+                float min_probability) {
+    CUDA_CALL(DepthTouchPerceptionCUDA, hashmap, depth, probabilities, intrinsic, extrinsic,
+                voxel_block_coords, voxel_grid_resolution, voxel_size,
+                sdf_trunc, depth_scale, depth_max, stride, min_probability);
+}
+
+
 void UnseenFrustumDeepTouch(std::shared_ptr<core::HashMap> &hashmap,
                     const core::Tensor &depth,
                     const core::Tensor &intrinsic,

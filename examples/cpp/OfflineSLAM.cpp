@@ -150,7 +150,10 @@ int main(int argc, char* argv[]) {
     Tensor T_frame_to_model =
             Tensor::Eye(4, core::Dtype::Float64, core::Device("CPU:0"));
 
-    t::pipelines::slam::Model model(voxel_size, block_resolution, block_count,
+    t::pipelines::slam::Model model(voxel_size,
+                                    block_resolution, block_count,
+                                    voxel_size,
+                                    block_resolution, block_count,
                                     num_classes, T_frame_to_model, device);
 
     // Initialize frame

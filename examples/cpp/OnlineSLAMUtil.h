@@ -309,6 +309,8 @@ public:
                                             voxel_size, 16,
                                             prop_values_.block_count,
                                             prop_values_.num_classes,
+                                            voxel_size, 16,
+                                            prop_values_.block_count,
                                             core::Tensor::Eye(
                                                     4, core::Dtype::Float64,
                                                     core::Device("CPU:0")),

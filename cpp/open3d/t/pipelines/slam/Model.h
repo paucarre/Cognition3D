@@ -47,6 +47,9 @@ public:
     Model(float voxel_size,
           int block_resolution,
           int block_count,
+          float voxel_size_detection,
+          int block_resolution_detection,
+          int est_block_count_detection,
           int classes = 3,
           const core::Tensor& T_init = core::Tensor::Eye(4,
                                                          core::Float64,
@@ -94,10 +97,13 @@ public:
     /// \param depth_scale Scale factor to convert raw data into meter metric.
     /// \param depth_max Depth truncation to discard points far away from the
     /// camera.
+    /// \param min_probability Minimum probability a probability pixel needs to reach
+    /// for voxel blocks to be allocated.
     void Integrate(const Frame& input_frame,
                    float depth_scale,
                    float depth_max,
-                   float trunc_voxel_multiplier = 8.0f);
+                   float trunc_voxel_multiplier = 8.0f,
+                   float min_probability = 0.1f);
 
     /// Extract surface point cloud for visualization / model saving.
     /// \param weight_threshold Weight threshold of the TSDF voxels to prune
@@ -149,7 +155,9 @@ public:
 public:
     /// Maintained volumetric map.
     t::geometry::VoxelBlockGrid voxel_grid_;
+    t::geometry::VoxelBlockGrid voxel_grid_detections_;
     core::Tensor frustum_block_coords_;
+    core::Tensor frustum_block_coords_detections_;
 
     /// T_frame_to_model, maintained tracking state in a (4, 4), Float64 Tensor
     /// on CPU.

@@ -484,11 +484,6 @@ void IntegrateCPU
         sdf = sdf < sdf_trunc ? sdf : sdf_trunc;
         sdf /= sdf_trunc;
 
-        // This works because values are SoA, and thus all their data
-        // is compact. Therefore, to access the address of a value
-        // one can flatten the whole memory as a linear index.
-        // One can start from the "block_index * resolution3", which is an address,
-        // and move to the address of the voxel by using the remaining offset.
         index_t linear_idx = block_idx * resolution3 + voxel_idx;
 
         tsdf_t* tsdf_ptr = tsdf_base_ptr + linear_idx;
@@ -497,32 +492,32 @@ void IntegrateCPU
         float inv_wsum = 1.0f / (*weight_ptr + 1);
         float weight = *weight_ptr;
         *tsdf_ptr = (weight * (*tsdf_ptr) + sdf) * inv_wsum;
-
-        if (integrate_color) {
-            color_t* color_ptr = color_base_ptr + 3 * linear_idx;
-
-            // Unproject ui, vi with depth_intrinsic, then project back with
-            // color_intrinsic
+        // Unproject ui, vi with depth_intrinsic, then project back with
+        // color_intrinsic/probabilities_intrinsic
+        if(integrate_color) {
             float x, y, z;
             transform_indexer.Unproject(ui, vi, 1.0, &x, &y, &z);
-
             float uf, vf;
             colormap_indexer.Project(x, y, z, &uf, &vf);
             if (color_indexer.InBoundary(uf, vf)) {
-                ui = round(uf);
-                vi = round(vf);
+                index_t ui_color = round(uf);
+                index_t vi_color = round(vf);
+                color_t* color_ptr = color_base_ptr + 3 * linear_idx;
 
                 input_color_t* input_color_ptr =
-                        color_indexer.GetDataPtr<input_color_t>(ui, vi);
+                        color_indexer.GetDataPtr<input_color_t>(ui_color, vi_color);
 
                 for (index_t i = 0; i < 3; ++i) {
                     color_ptr[i] = (weight * color_ptr[i] +
                                     input_color_ptr[i] * color_multiplier) *
-                                   inv_wsum;
+                                inv_wsum;
                 }
             }
         }
-        *weight_ptr = weight + 1;
+        if (weight < 10.0) {
+            *weight_ptr = weight + 1.0;
+        }
+
     });
 
 #if defined(__CUDACC__)
@@ -619,6 +614,7 @@ void IntegrateCPU
     }
 
     index_t n = indices.GetLength() * resolution3;
+
     core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t workload_idx) {
         // Natural index (0, N) -> (block_idx, voxel_idx)
         index_t block_idx = indices_ptr[workload_idx / resolution3];
@@ -673,77 +669,70 @@ void IntegrateCPU
         tsdf_t* tsdf_ptr = tsdf_base_ptr + linear_idx;
         weight_t* weight_ptr = weight_base_ptr + linear_idx;
 
-        float inv_wsum = 1.0f / (*weight_ptr + 1);
-        float weight = *weight_ptr;
-        *tsdf_ptr = (weight * (*tsdf_ptr) + sdf) * inv_wsum;
-        if (integrate_color || integrate_probabilities) {
-            // Unproject ui, vi with depth_intrinsic, then project back with
-            // color_intrinsic/probabilities_intrinsic
+        // This "softens" the integration of probabilities.
+        // When the bias is zero (which is like having no bias)
+        // then the probabilities get updated way too fast creting
+        // initial confident predictions.
+
+        // Unproject ui, vi with depth_intrinsic, then project back with
+        // color_intrinsic/probabilities_intrinsic
+        if (integrate_probabilities) {
             float x, y, z;
             transform_indexer.Unproject(ui, vi, 1.0, &x, &y, &z);
-            if (integrate_color) {
-                float uf, vf;
-                colormap_indexer.Project(x, y, z, &uf, &vf);
-                if (color_indexer.InBoundary(uf, vf)) {
-                    index_t ui_color = round(uf);
-                    index_t vi_color = round(vf);
-                    color_t* color_ptr = color_base_ptr + 3 * linear_idx;
+            float uf, vf;
+            probabilitiesmap_indexer.Project(x, y, z, &uf, &vf);
+            if (probabilities_indexer.InBoundary(uf, vf)) {
+                index_t ui_prob = round(uf);
+                index_t vi_prob = round(vf);
 
-                    input_color_t* input_color_ptr =
-                            color_indexer.GetDataPtr<input_color_t>(ui_color, vi_color);
-
-                    for (index_t i = 0; i < 3; ++i) {
-                        color_ptr[i] = (weight * color_ptr[i] +
-                                        input_color_ptr[i] * color_multiplier) *
-                                    inv_wsum;
+                probability_t* probabilities_ptr = probabilities_base_ptr + num_classes * linear_idx;
+                input_probability_t* input_probabilities_ptr =
+                        probabilities_indexer.GetDataPtr<input_probability_t>(ui_prob, vi_prob);
+                bool probabilities_found = false;
+                float bias_weights = 2.0;
+                float inv_wsum_predictions = 1.0f / ((*weight_ptr) + 1.0 + bias_weights);
+                float weight_predictions = (*weight_ptr) + bias_weights;
+                for (index_t class_idx = 0; class_idx < num_classes; ++class_idx) {
+                    probabilities_ptr[class_idx] = (weight_predictions * probabilities_ptr[class_idx] +
+                                    input_probabilities_ptr[class_idx]) *
+                                inv_wsum_predictions;
+                    // TODO: the threshold should be parametrizable
+                    if(!probabilities_found && probabilities_ptr[class_idx] >= 0.1) {// minimum_probability_threshod
+                        probabilities_found = true;
                     }
                 }
-            }
-            if (integrate_probabilities) {
-                float uf, vf;
-                probabilitiesmap_indexer.Project(x, y, z, &uf, &vf);
-                if (probabilities_indexer.InBoundary(uf, vf)) {
-                    index_t ui_prob = round(uf);
-                    index_t vi_prob = round(vf);
+                if(probabilities_found) {
+                    float inv_wsum = 1.0f / (*weight_ptr + 1);
+                    float weight = *weight_ptr;
+                    *tsdf_ptr = (weight * (*tsdf_ptr) + sdf) * inv_wsum;
+                    if(integrate_color) {
+                        float uf, vf;
+                        colormap_indexer.Project(x, y, z, &uf, &vf);
+                        if (color_indexer.InBoundary(uf, vf)) {
+                            index_t ui_color = round(uf);
+                            index_t vi_color = round(vf);
+                            color_t* color_ptr = color_base_ptr + 3 * linear_idx;
 
-                    probability_t* probabilities_ptr = probabilities_base_ptr + num_classes * linear_idx;
-                    input_probability_t* input_probabilities_ptr =
-                            probabilities_indexer.GetDataPtr<input_probability_t>(ui_prob, vi_prob);
+                            input_color_t* input_color_ptr =
+                                    color_indexer.GetDataPtr<input_color_t>(ui_color, vi_color);
 
-                    for (index_t class_idx = 0; class_idx < num_classes; ++class_idx) {
-                        probabilities_ptr[class_idx] = (weight * probabilities_ptr[class_idx] +
-                                        input_probabilities_ptr[class_idx]) *
-                                    inv_wsum;
+                            for (index_t i = 0; i < 3; ++i) {
+                                color_ptr[i] = (weight * color_ptr[i] +
+                                                input_color_ptr[i] * color_multiplier) *
+                                            inv_wsum;
+                            }
+                        }
                     }
+                    if (weight < 10.0) {
+                        *weight_ptr = weight + 1.0;
+                    }
+                } else {
+                    //*weight_ptr = 0.0;
                 }
             }
         }
-        if (weight < 10.0) {
-            // Using simplified version of:
-            // https://arxiv.org/pdf/1611.03631.pdf
-            //float depth_mm = depth * 1000.0;
-            //double quadratic = std::min( 1.0, 1.0 / ( depth_mm * depth_mm ) );
-            *weight_ptr = weight + 1.0; // static_cast<weight_t>(quadratic);
-        }
 
-        /*
-            THIS IS AN ALTERNATIVE TO CONSIDER INSPIRED IN THE DOWN INTEGRATION
-        From page 10 of https://docs.rs-online.com/f31c/A700000006942953.pdf
-        Accuracy at distance:
-                <  5mm @ 1m
-                < 14mm @ 9m
-        Standard deviation at distance:
-                    2.5mm @ 1m
-                15.5mm @ 9m
-        let's assume a linear interpolation works
-        float accuracy_m = ( ( (5.0 / 1000.0) * (9.0 - depth) ) + ( (14.0 / 1000.0) * (depth - 1.0) ) ) / (9.0 - 1.0);
-        float standard_deviation_m = ( ( (2.5 / 1000.0) * (9.0 - depth) ) + ( (15.5 / 1000.0) * (depth - 1.0) ) ) / (9.0 - 1.0);
-        float worst_case_deviation_m = accuracy_m + standard_deviation_m;
-        float exponent = -0.5 * (sdf * sdf) / ( worst_case_deviation_m / 6.0); // assuming six-sigma
-        *weight_ptr = static_cast<weight_t>(weight + exp( exponent ) );
-        */
     });
-
 #if defined(__CUDACC__)
     core::cuda::Synchronize();
 #endif
@@ -1744,7 +1733,8 @@ void ExtractDetectionPointCloudCPU
          float voxel_size,
          float weight_threshold,
          int& valid_size,
-         core::Tensor& objects_class_index, core::Tensor &background_class_index) {
+         core::Tensor& objects_class_index,
+         core::Tensor &background_class_index) {
     core::Device device = block_keys.GetDevice();
 
     // Parameters
@@ -1862,16 +1852,16 @@ void ExtractDetectionPointCloudCPU
                        block_keys.GetDevice());
     index_t* object_count_ptr = object_count.GetDataPtr<index_t>();
 
-    core::Tensor background_count(std::vector<index_t>{0}, {1}, core::Int32,
-                       block_keys.GetDevice());
-    index_t* background_count_ptr = background_count.GetDataPtr<index_t>();
+    //core::Tensor background_count(std::vector<index_t>{0}, {1}, core::Int32,
+    //                   block_keys.GetDevice());
+    //index_t* background_count_ptr = background_count.GetDataPtr<index_t>();
 
 #else
     std::atomic<index_t> object_count_atomic(0);
     std::atomic<index_t>* object_count_ptr = &object_count_atomic;
 
-    std::atomic<index_t> background_count_atomic(0);
-    std::atomic<index_t>* background_count_ptr = &background_count_atomic;
+    //std::atomic<index_t> background_count_atomic(0);
+    //std::atomic<index_t>* background_count_ptr = &background_count_atomic;
 #endif
 
     if (points.GetLength() == 0) {
@@ -1991,8 +1981,14 @@ void ExtractDetectionPointCloudCPU
                     OPEN3D_ATOMIC_ADD(object_count_ptr, 1);
                     *points_class_index_ptr = class_index;
                 } else {
+                    //TODO: this is legacy as we can't keep the background in the
+                    // predictions hashmap
                     //background
-                    OPEN3D_ATOMIC_ADD(background_count_ptr, 1);
+                    //OPEN3D_ATOMIC_ADD(background_count_ptr, 1);
+
+                    // WATCH OUT!
+                    // Do this so that memory is initialized, otherwise you get an
+                    // illegal access to memory.
                     *points_class_index_ptr = class_index + 1;
                 }
 
@@ -2042,24 +2038,24 @@ void ExtractDetectionPointCloudCPU
 #if defined(__CUDACC__)
     index_t total_count = count.Item<index_t>();
     index_t total_object_count = object_count.Item<index_t>();
-    index_t total_background_count = background_count.Item<index_t>();
+    //index_t total_background_count = background_count.Item<index_t>();
 
 #else
     index_t total_count = (*count_ptr).load();
     index_t total_object_count = (*object_count_ptr).load();
-    index_t total_background_count = (*background_count_ptr).load();
+    //index_t total_background_count = (*background_count_ptr).load();
 #endif
 
 #if defined(__CUDACC__)
     object_count[0] = 0;
-    background_count[0] = 0;
+    //background_count[0] = 0;
 #else
     (*object_count_ptr) = 0;
-    (*background_count_ptr) = 0;
+    //(*background_count_ptr) = 0;
 #endif
 
-    background_class_index = core::Tensor({total_background_count}, core::Int64, device);
-    ArrayIndexer background_class_index_indexer = ArrayIndexer(background_class_index, 1);
+    //background_class_index = core::Tensor({total_background_count}, core::Int64, device);
+    //ArrayIndexer background_class_index_indexer = ArrayIndexer(background_class_index, 1);
     objects_class_index = core::Tensor({total_object_count}, core::Int64, device);
     ArrayIndexer objects_class_index_indexer = ArrayIndexer(objects_class_index, 1);
 
@@ -2072,11 +2068,11 @@ void ExtractDetectionPointCloudCPU
             auto object_idx = OPEN3D_ATOMIC_ADD(object_count_ptr, 1);
             int64_t* object_index_ptr = objects_class_index_indexer.GetDataPtr<int64_t>(object_idx);
             *object_index_ptr = static_cast<int64_t>(workload_idx);
-        } else if(*points_class_index_ptr == class_index + 1){
-            // background
-            auto background_idx = OPEN3D_ATOMIC_ADD(background_count_ptr, 1);
-            int64_t* background_index_ptr = background_class_index_indexer.GetDataPtr<int64_t>(background_idx);
-            *background_index_ptr = static_cast<int64_t>(workload_idx);
+        //} else if(*points_class_index_ptr == class_index + 1){
+        //    // background
+        //    auto background_idx = OPEN3D_ATOMIC_ADD(background_count_ptr, 1);
+        //    int64_t* background_index_ptr = background_class_index_indexer.GetDataPtr<int64_t>(background_idx);
+        //    *background_index_ptr = static_cast<int64_t>(workload_idx);
         }
     });
 

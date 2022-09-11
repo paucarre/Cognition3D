@@ -42,18 +42,28 @@ namespace slam {
 Model::Model(float voxel_size,
              int block_resolution,
              int est_block_count,
+             float voxel_size_detection,
+             int block_resolution_detection,
+             int est_block_count_detection,
              int classes,
              const core::Tensor& T_init,
              const core::Device& device)
-    : voxel_grid_(std::vector<std::string>({"tsdf", "weight", "color", "probabilities"}),
+    : voxel_grid_(std::vector<std::string>({"tsdf", "weight", "color"}),
                   std::vector<core::Dtype>(
-                          {core::Float32, core::Float32, core::UInt16, core::Float32}),
-                  std::vector<core::SizeVector>({{1}, {1}, {3}, {classes}}),
+                          {core::Float32, core::Float32, core::UInt16}),
+                  std::vector<core::SizeVector>({{1}, {1}, {3}}),
                   voxel_size,
                   block_resolution,
                   est_block_count,
                   device),
-      //classes_(classes),
+     voxel_grid_detections_(std::vector<std::string>({"tsdf", "weight", "color", "probabilities"}),
+                  std::vector<core::Dtype>(
+                          {core::Float32, core::Float32, core::UInt16, core::Float32}),
+                  std::vector<core::SizeVector>({{1}, {1}, {3}, {classes}}),
+                  voxel_size_detection,
+                  block_resolution_detection,
+                  est_block_count_detection,
+                  device),
       T_frame_to_world_(T_init.To(core::Device("CPU:0"))) {}
 
 void Model::SynthesizeModelFrame(Frame& raycast_frame,
@@ -103,17 +113,27 @@ odometry::OdometryResult Model::TrackFrameToModel(const Frame& input_frame,
 void Model::Integrate(const Frame& input_frame,
                       float depth_scale,
                       float depth_max,
-                      float trunc_voxel_multiplier) {
+                      float trunc_voxel_multiplier,
+                      float min_probability) {
     t::geometry::Image depth = input_frame.GetDataAsImage("depth");
     t::geometry::Image color = input_frame.GetDataAsImage("color");
     t::geometry::Image probabilities = input_frame.GetDataAsImage("probabilities");
     core::Tensor intrinsic = input_frame.GetIntrinsics();
     core::Tensor extrinsic =
             t::geometry::InverseTransformation(GetCurrentFramePose());
+    /*
     frustum_block_coords_ = voxel_grid_.GetUniqueBlockCoordinates(
             depth, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier);
-    voxel_grid_.Integrate(frustum_block_coords_, depth, color, probabilities,
+    voxel_grid_.Integrate(frustum_block_coords_, depth, color,
+                          intrinsic,
+                          extrinsic, depth_scale, depth_max,
+                          trunc_voxel_multiplier);
+    */
+    frustum_block_coords_detections_ = voxel_grid_detections_.GetUniqueBlockCoordinatesPerception(
+            depth, probabilities, intrinsic, extrinsic, depth_scale, depth_max,
+            trunc_voxel_multiplier, min_probability);
+    voxel_grid_detections_.Integrate(frustum_block_coords_detections_, depth, color, probabilities,
                           intrinsic,
                           extrinsic, depth_scale, depth_max,
                           trunc_voxel_multiplier);
@@ -132,10 +152,26 @@ void Model::DownIntegrate(const Frame& input_frame,
     core::Tensor intrinsic = input_frame.GetIntrinsics();
     core::Tensor extrinsic =
             t::geometry::InverseTransformation(GetCurrentFramePose());
+    /*
     frustum_block_coords_ = voxel_grid_.UnseenFrustumGetUniqueBlockCoordinates(
             depth, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier, depth_std_multiplier);
     voxel_grid_.DownIntegrate(frustum_block_coords_,
+                              depth,
+                              intrinsic,
+                              extrinsic,
+                              depth_scale,
+                              depth_max,
+                              trunc_voxel_multiplier,
+                              down_integration_multiplier,
+                              erase,
+                              weight_threshold,
+                              occupancy);
+    */
+    frustum_block_coords_detections_ = voxel_grid_detections_.UnseenFrustumGetUniqueBlockCoordinates(
+            depth, intrinsic, extrinsic, depth_scale, depth_max,
+            trunc_voxel_multiplier, depth_std_multiplier);
+    voxel_grid_detections_.DownIntegrate(frustum_block_coords_detections_,
                               depth,
                               intrinsic,
                               extrinsic,
@@ -157,8 +193,11 @@ std::vector<t::geometry::PointCloud> Model::ExtractDetectionPointCloud(float wei
                                               int estimated_number,
                                               int class_index,
                                               float minimum_probability){
-    return voxel_grid_.ExtractDetectionPointCloud(weight_threshold,
+    //t::geometry::PointCloud background = voxel_grid_.ExtractPointCloud(weight_threshold, estimated_number);
+    std::vector<t::geometry::PointCloud> detection_pointclouds = voxel_grid_detections_.ExtractDetectionPointCloud(weight_threshold,
         estimated_number, class_index, minimum_probability);
+    //return std::vector<t::geometry::PointCloud>{detection_pointclouds[0], detection_pointclouds[1]};
+    return detection_pointclouds;
 }
 
 t::geometry::TriangleMesh Model::ExtractTriangleMesh(float weight_threshold,

@@ -264,6 +264,47 @@ core::Tensor VoxelBlockGrid::GetUniqueBlockCoordinates(
     return block_coords;
 }
 
+core::Tensor VoxelBlockGrid::GetUniqueBlockCoordinatesPerception(const Image &depth,
+                                           const Image &probabilities,
+                                           const core::Tensor &intrinsic,
+                                           const core::Tensor &extrinsic,
+                                           float depth_scale,
+                                           float depth_max,
+                                           float trunc_voxel_multiplier,
+                                           float min_probability) {
+    AssertInitialized();
+    CheckDepthTensor(depth.AsTensor());
+    CheckDepthTensor(probabilities.AsTensor());
+    CheckIntrinsicTensor(intrinsic);
+    CheckExtrinsicTensor(extrinsic);
+
+    const int64_t down_factor = 4;
+    const int64_t est_sample_multiplier = 4;
+    if (frustum_hashmap_ == nullptr) {
+        int64_t capacity = (depth.GetCols() / down_factor) *
+                           (depth.GetRows() / down_factor) *
+                           est_sample_multiplier;
+        frustum_hashmap_ = std::make_shared<core::HashMap>(
+                capacity, core::Int32, core::SizeVector{3}, core::Int32,
+                core::SizeVector{1}, block_hashmap_->GetDevice());
+    } else {
+        frustum_hashmap_->Clear();
+    }
+
+    core::Tensor block_coords;
+    kernel::voxel_grid::DepthTouchPerception(frustum_hashmap_, depth.AsTensor(),
+                                   probabilities.AsTensor(),
+                                   intrinsic, extrinsic, block_coords,
+                                   block_resolution_, voxel_size_,
+                                   voxel_size_ * trunc_voxel_multiplier,
+                                   depth_scale, depth_max, down_factor,
+                                   min_probability);
+
+    return block_coords;
+
+}
+
+
 
 core::Tensor VoxelBlockGrid::UnseenFrustumGetUniqueBlockCoordinates(
         const Image &depth,
@@ -439,6 +480,9 @@ void VoxelBlockGrid::DownIntegrate(
             if(empty_block_coords.GetLength() > 0) {
                 block_hashmap_->Erase(empty_block_coords, output_masks);
             }
+            if(block_coords.GetLength() > 0) {
+                block_hashmap_->Erase(block_coords);
+            }
         }
     }
 }
@@ -544,36 +588,38 @@ void VoxelBlockGrid::Integrate(const core::Tensor &block_coords,
                                float depth_scale,
                                float depth_max,
                                float trunc_voxel_multiplier) {
-    AssertInitialized();
-    bool integrate_color = color.AsTensor().NumElements() > 0;
-    bool integrate_probabilities = probabilities.AsTensor().NumElements() > 0;
+    if(block_coords.GetLength() > 0) {
+        AssertInitialized();
+        bool integrate_color = color.AsTensor().NumElements() > 0;
+        bool integrate_probabilities = probabilities.AsTensor().NumElements() > 0;
 
-    CheckBlockCoorinates(block_coords);
-    CheckDepthTensor(depth.AsTensor());
-    if (integrate_color) {
-        CheckColorTensor(color.AsTensor());
+        CheckBlockCoorinates(block_coords);
+        CheckDepthTensor(depth.AsTensor());
+        if (integrate_color) {
+            CheckColorTensor(color.AsTensor());
+        }
+        if (integrate_probabilities) {
+            CheckProbabilityTensor(probabilities.AsTensor());
+        }
+        CheckIntrinsicTensor(depth_intrinsic);
+        CheckIntrinsicTensor(color_intrinsic);
+        CheckIntrinsicTensor(probabilities_intrinsic);
+        CheckExtrinsicTensor(extrinsic);
+
+        core::Tensor buf_indices, masks;
+        block_hashmap_->Activate(block_coords, buf_indices, masks);
+        block_hashmap_->Find(block_coords, buf_indices, masks);
+
+        core::Tensor block_keys = block_hashmap_->GetKeyTensor();
+        TensorMap block_value_map =
+                ConstructTensorMap(*block_hashmap_, name_attr_map_);
+
+        kernel::voxel_grid::Integrate(
+                depth.AsTensor(), color.AsTensor(), probabilities.AsTensor(), buf_indices, block_keys,
+                block_value_map, depth_intrinsic, color_intrinsic, probabilities_intrinsic, extrinsic,
+                block_resolution_, voxel_size_,
+                voxel_size_ * trunc_voxel_multiplier, depth_scale, depth_max);
     }
-    if (integrate_probabilities) {
-        CheckProbabilityTensor(probabilities.AsTensor());
-    }
-    CheckIntrinsicTensor(depth_intrinsic);
-    CheckIntrinsicTensor(color_intrinsic);
-    CheckIntrinsicTensor(probabilities_intrinsic);
-    CheckExtrinsicTensor(extrinsic);
-
-    core::Tensor buf_indices, masks;
-    block_hashmap_->Activate(block_coords, buf_indices, masks);
-    block_hashmap_->Find(block_coords, buf_indices, masks);
-
-    core::Tensor block_keys = block_hashmap_->GetKeyTensor();
-    TensorMap block_value_map =
-            ConstructTensorMap(*block_hashmap_, name_attr_map_);
-
-    kernel::voxel_grid::Integrate(
-            depth.AsTensor(), color.AsTensor(), probabilities.AsTensor(), buf_indices, block_keys,
-            block_value_map, depth_intrinsic, color_intrinsic, probabilities_intrinsic, extrinsic,
-            block_resolution_, voxel_size_,
-            voxel_size_ * trunc_voxel_multiplier, depth_scale, depth_max);
 }
 
 PointCloud VoxelBlockGrid::ExtractPointCloud(float weight_threshold,
@@ -617,87 +663,49 @@ std::vector<PointCloud> VoxelBlockGrid::ExtractDetectionPointCloud(float weight_
     AssertInitialized();
     core::Tensor active_buf_indices;
     block_hashmap_->GetActiveIndices(active_buf_indices);
+    if(active_buf_indices.GetLength() > 0) {
 
-    core::Tensor active_nb_buf_indices, active_nb_masks;
-    std::tie(active_nb_buf_indices, active_nb_masks) =
-            BufferRadiusNeighbors(block_hashmap_, active_buf_indices);
+        core::Tensor active_nb_buf_indices, active_nb_masks;
+        std::tie(active_nb_buf_indices, active_nb_masks) =
+                BufferRadiusNeighbors(block_hashmap_, active_buf_indices);
 
-    // Extract points around zero-crossings ( isosurface )
-    core::Tensor points, normals, colors, probabilities;
+        // Extract points around zero-crossings ( isosurface )
+        core::Tensor points, normals, colors, probabilities;
 
-    core::Tensor block_keys = block_hashmap_->GetKeyTensor();
-    TensorMap block_value_map =
-            ConstructTensorMap(*block_hashmap_, name_attr_map_);
+        core::Tensor block_keys = block_hashmap_->GetKeyTensor();
+        TensorMap block_value_map =
+                ConstructTensorMap(*block_hashmap_, name_attr_map_);
 
-    core::Tensor background_class_index({0}, core::UInt32);
-    core::Tensor objects_class_index({0}, core::UInt32);
+        core::Tensor background_class_index({0}, core::UInt32);
+        core::Tensor objects_class_index({0}, core::UInt32);
 
-    kernel::voxel_grid::ExtractDetectionPointCloud(
-            class_index, minimum_probability,
-            active_buf_indices, active_nb_buf_indices, active_nb_masks,
-            block_keys, block_value_map, points, normals, colors,
-            probabilities,
-            block_resolution_, voxel_size_, weight_threshold,
-            estimated_point_number,
-            objects_class_index,
-            background_class_index);
+        kernel::voxel_grid::ExtractDetectionPointCloud(
+                class_index, minimum_probability,
+                active_buf_indices, active_nb_buf_indices, active_nb_masks,
+                block_keys, block_value_map, points, normals, colors,
+                probabilities,
+                block_resolution_, voxel_size_, weight_threshold,
+                estimated_point_number,
+                objects_class_index,
+                background_class_index);
 
-    /*
-    std::vector<long int> background_indices;
-    std::vector<long int> class_indices;
-    for(long int idx = 0; idx < estimated_point_number; ++idx) {
-        unsigned int value = points_class_index[idx].Item<unsigned int>();
-        if(value == 0) {
-            class_indices.push_back(idx);
-        } else if(value == 1) { /// TODO: change this for generic classes
-            background_indices.push_back(idx);
+        //utility::LogInfo("Shape of object indices {}", objects_class_index.GetShape());
+        //utility::LogInfo("Shape of backgrounds indices {}", background_class_index.GetShape());
+        //utility::LogInfo("Shape of   all  indices {}", points.GetShape());
+        //utility::LogInfo("Total count of cloudpoints {}", estimated_point_number);
+
+        //TODO: THIS CODE SEEMS TO CAUSE AN ILLEGAL ACCESS TO MEMORY !
+        std::vector<core::Tensor> object_indices_selector{objects_class_index};
+        PointCloud pcd_object = PointCloud(points.IndexGet(object_indices_selector));
+        pcd_object.SetPointNormals(normals.IndexGet(object_indices_selector));
+        if (colors.GetLength() == normals.GetLength()) {
+            pcd_object.SetPointColors(colors.IndexGet(object_indices_selector));
         }
+
+        return std::vector<PointCloud>{pcd_object};
+    } else {
+        return std::vector<PointCloud>{};
     }
-
-    long int background_points = background_indices.size();
-    core::Tensor background_indices_tensor(std::move(background_indices),
-        {background_points},
-        core::Int64,
-        points_class_index.GetDevice());
-    long int class_points = class_indices.size();
-    core::Tensor class_indices_tensor(std::move(class_indices),
-        {class_points},
-        core::Int64,
-        points_class_index.GetDevice());
-    */
-   /*
-
-*/
-    utility::LogInfo("Shape of object indices {}", objects_class_index.GetShape());
-    utility::LogInfo("Shape of backgrounds indices {}", background_class_index.GetShape());
-    utility::LogInfo("Shape of   all  indices {}", points.GetShape());
-    utility::LogInfo("Total count of cloudpoints {}", estimated_point_number);
-
-
-    std::vector<core::Tensor> object_indices_selector{objects_class_index};
-    PointCloud pcd_object = PointCloud(points.IndexGet(object_indices_selector));
-    pcd_object.SetPointNormals(normals.IndexGet(object_indices_selector));
-    if (colors.GetLength() == normals.GetLength()) {
-        pcd_object.SetPointColors(colors.IndexGet(object_indices_selector));
-    }
-
-
-    /*
-    PointCloud pcd = PointCloud(points.Slice(0, 0, estimated_point_number));
-    pcd.SetPointNormals(normals.Slice(0, 0, estimated_point_number));
-    if (colors.GetLength() == normals.GetLength()) {
-        pcd.SetPointColors(colors.Slice(0, 0, estimated_point_number));
-    }
-    */
-
-    std::vector<core::Tensor> background_indices_selector{std::move(background_class_index)};
-    auto pcd_background = PointCloud(points.IndexGet(background_indices_selector));
-    pcd_background.SetPointNormals(normals.IndexGet(background_indices_selector));
-    if (colors.GetLength() == normals.GetLength()) {
-        pcd_background.SetPointColors(colors.IndexGet(background_indices_selector));
-    }
-
-    return std::vector<PointCloud>{pcd_object, pcd_background};
 }
 
 
