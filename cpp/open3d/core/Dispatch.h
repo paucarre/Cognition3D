@@ -83,6 +83,7 @@
         }                                                \
     }()
 
+
 #define DISPATCH_DTYPE_TO_TEMPLATE_WITH_BOOL(DTYPE, ...)    \
     [&] {                                                   \
         if (DTYPE == open3d::core::Bool) {                  \

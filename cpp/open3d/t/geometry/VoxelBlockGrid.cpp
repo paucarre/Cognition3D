@@ -274,10 +274,11 @@ core::Tensor VoxelBlockGrid::GetUniqueBlockCoordinatesPerception(const Image &de
                                            float min_probability) {
     AssertInitialized();
     CheckDepthTensor(depth.AsTensor());
-    CheckDepthTensor(probabilities.AsTensor());
     CheckIntrinsicTensor(intrinsic);
     CheckExtrinsicTensor(extrinsic);
 
+    // for perception it is important to analize the whole image
+    // as otherwise there could be poor probability estimation
     const int64_t down_factor = 4;
     const int64_t est_sample_multiplier = 4;
     if (frustum_hashmap_ == nullptr) {

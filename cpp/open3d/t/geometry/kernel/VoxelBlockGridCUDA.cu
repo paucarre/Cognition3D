@@ -259,10 +259,16 @@ void DepthTouchPerceptionCUDA(std::shared_ptr<core::HashMap> &hashmap,
                     float depth_max,
                     index_t stride,
                     float min_probability) {
+    //TODO: move this as argument or elsewhere
+    //index_t class_index = 0;
     core::Device device = depth.GetDevice();
     NDArrayIndexer depth_indexer(depth, 2);
     NDArrayIndexer probability_indexer(probabilities, 2);
-
+    float mean_prob = probabilities.Mean({0, 1, 2}, false).Item<float>();
+    float max_prob  = probabilities.Max({0, 1, 2}, false).Item<float>();
+    float min_prob  = probabilities.Min({0, 1, 2}, false).Item<float>();
+    utility::LogInfo("PROB TENSOR | MIN {} | MAX {} | MEAN {} | STRIDE {}", min_prob, max_prob, mean_prob, stride);
+    utility::LogInfo("PROB TENSOR | THRESHOLD {} | SHAPE {} {}", min_probability, probabilities.GetShape(), depth.GetShape());
     core::Tensor pose = t::geometry::InverseTransformation(extrinsic);
     TransformIndexer ti(intrinsic, pose, 1.0f);
 
@@ -294,8 +300,14 @@ void DepthTouchPerceptionCUDA(std::shared_ptr<core::HashMap> &hashmap,
             index_t x = (workload_idx % cols_strided) * stride;
 
             float d = *depth_indexer.GetDataPtr<scalar_t>(x, y) / depth_scale;
-            float prob = *probability_indexer.GetDataPtr<scalar_t>(x, y);
-            if (d > 0 && d < depth_max && prob >= min_probability) {
+            bool relevant_probability_found = false;
+            for(index_t x_offset = 0; (!relevant_probability_found) && x_offset < stride;x_offset++){
+                for(index_t y_offset = 0; (!relevant_probability_found) && y_offset < stride;y_offset++){
+                    float current_prob = *probability_indexer.GetDataPtr<float>(x + x_offset, y + y_offset);
+                    relevant_probability_found = relevant_probability_found || current_prob >= min_probability;
+                }
+            }
+            if (d > 0 && d < depth_max && relevant_probability_found) {
                 float x_c = 0, y_c = 0, z_c = 0;
                 ti.Unproject(static_cast<float>(x), static_cast<float>(y), 1.0,
                              &x_c, &y_c, &z_c);
@@ -345,6 +357,7 @@ void DepthTouchPerceptionCUDA(std::shared_ptr<core::HashMap> &hashmap,
                 "voxel_size");
     }
 
+    utility::LogInfo("TOTAL INTEGRATION COUNT: {} {}", total_block_count, static_cast<index_t>(hashmap->GetCapacity()));
     total_block_count = std::min(total_block_count,
                                  static_cast<index_t>(hashmap->GetCapacity()));
     block_coordi = block_coordi.Slice(0, 0, total_block_count);
