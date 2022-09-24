@@ -388,6 +388,157 @@ void DepthTouchPerceptionCUDA(std::shared_ptr<core::HashMap> &hashmap,
 }
 
 
+void UnseenFrustumDeepTouchPerceptionCUDA(std::shared_ptr<core::HashMap> &hashmap,
+                    const core::Tensor &depth,
+                    const core::Tensor &probabilities,
+                    const core::Tensor &intrinsic,
+                    const core::Tensor &extrinsic,
+                    core::Tensor &voxel_block_coords,
+                    index_t voxel_grid_resolution,
+                    float voxel_size,
+                    float sdf_trunc,
+                    float depth_scale,
+                    float depth_max,
+                    index_t stride,
+                    float depth_std_times) {
+    core::Device device = depth.GetDevice();
+    NDArrayIndexer depth_indexer(depth, 2);
+    core::Tensor pose = t::geometry::InverseTransformation(extrinsic);
+    TransformIndexer ti(intrinsic, pose, 1.0f);
+
+    // Output
+    index_t rows_strided = depth_indexer.GetShape(0) / stride;
+    index_t cols_strided = depth_indexer.GetShape(1) / stride;
+    index_t n = rows_strided * cols_strided;
+
+    const index_t number_of_steps = 20; //6
+    const index_t est_multipler_factor = (number_of_steps + 1);
+
+    static core::Tensor block_coordi;
+    if (block_coordi.GetLength() != est_multipler_factor * n) {
+        block_coordi = core::Tensor({est_multipler_factor * n, 3},
+                                    core::Dtype::Int32, device);
+    }
+
+    // Counter
+    core::Tensor count(std::vector<index_t>{0}, {1}, core::Dtype::Int32,
+                       device);
+    index_t *count_ptr = count.GetDataPtr<index_t>();
+    index_t *block_coordi_ptr = block_coordi.GetDataPtr<index_t>();
+
+    index_t resolution = voxel_grid_resolution;
+    float block_size = voxel_size * resolution;
+    DISPATCH_DTYPE_TO_TEMPLATE(depth.GetDtype(), [&]() {
+        core::ParallelFor(device, n, [=] OPEN3D_DEVICE(index_t workload_idx) {
+            index_t y = (workload_idx / cols_strided) * stride;
+            index_t x = (workload_idx % cols_strided) * stride;
+
+            float d = depth_max;
+            //bool compatible_depth_found = false;
+            for(index_t x_offset = 0; x_offset < stride;x_offset++){ //(!compatible_depth_found) &&
+                for(index_t y_offset = 0; y_offset < stride;y_offset++){ //(!compatible_depth_found) &&
+                    float current_d = *depth_indexer.GetDataPtr<scalar_t>(x + x_offset, y + y_offset) / depth_scale;
+                    if(current_d < depth_max || current_d > d) {
+                        d = min(current_d, depth_max);
+                   }
+                   //compatible_depth_found = compatible_depth_found || (d > 0 && d =< depth_max);
+                }
+            }
+            //if (compatible_depth_found) {
+                float x_c = 0, y_c = 0, z_c = 0;
+                ti.Unproject(static_cast<float>(x), static_cast<float>(y), 1.0,
+                             &x_c, &y_c, &z_c);
+                float x_g = 0, y_g = 0, z_g = 0;
+                ti.RigidTransform(x_c, y_c, z_c, &x_g, &y_g, &z_g);
+
+                // Origin
+                float x_o = 0, y_o = 0, z_o = 0;
+                ti.GetCameraPosition(&x_o, &y_o, &z_o);
+
+                // Direction
+                float x_d = x_g - x_o;
+                float y_d = y_g - y_o;
+                float z_d = z_g - z_o;
+
+                const float t_min = 0.0;
+                /*
+                From page 10 of https://docs.rs-online.com/f31c/A700000006942953.pdf
+                Accuracy at distance:
+                        < 5mm @ 1m
+                        < 14mm @ 9m
+                Standard deviation at distance:
+                        2.5mm @ 1m
+                        15.5mm @ 9m
+                let's assume a linear interpolation works
+                */
+                //float accuracy_m = ( ( (5.0 / 1000.0) * (9.0 - d) ) + ( (14.0 / 1000.0) * (d - 1.0) ) ) / (9.0 - 1.0);
+                //float standard_deviation_m = ( ( (2.5 / 1000.0) * (9.0 - d) ) + ( (15.5 / 1000.0) * (d - 1.0) ) ) / (9.0 - 1.0);
+                //float worst_case_scenario_m = accuracy_m + standard_deviation_m;
+                // 3 times standard deviation is about 99% outside.
+                //  - (depth_std_times * worst_case_scenario_m)
+                const float t_max = max(0.0, min( d + sdf_trunc , depth_max ));
+                const float t_step = ( t_max - t_min ) / number_of_steps;
+
+                float t = t_min;
+                index_t idx = OPEN3D_ATOMIC_ADD(count_ptr, (number_of_steps + 1));
+                for (index_t step = 0; step <= number_of_steps; ++step) {
+                    index_t offset = (step + idx) * 3;
+
+                    index_t xb = static_cast<index_t>(
+                            floorf((x_o + t * x_d) / block_size));
+                    index_t yb = static_cast<index_t>(
+                            floorf((y_o + t * y_d) / block_size));
+                    index_t zb = static_cast<index_t>(
+                            floorf((z_o + t * z_d) / block_size));
+
+                    block_coordi_ptr[offset + 0] = xb;
+                    block_coordi_ptr[offset + 1] = yb;
+                    block_coordi_ptr[offset + 2] = zb;
+
+                    t += t_step;
+                }
+            //}
+        });
+    });
+
+    index_t total_block_count = static_cast<index_t>(count[0].Item<index_t>());
+    if (total_block_count == 0) {
+        utility::LogInfo(
+                "No block is touched in TSDF volume, abort integration. Please "
+                "check specified parameters, especially depth_scale and "
+                "voxel_size");
+    }
+
+    total_block_count = std::min(total_block_count,
+                                 static_cast<index_t>(hashmap->GetCapacity()));
+    block_coordi = block_coordi.Slice(0, 0, total_block_count);
+    core::Tensor block_addrs, block_masks;
+    // TODO: it is not reasonable to activate/create bocks that are very likely
+    // just empty space. It is important just to activate, already activate?
+    hashmap->Activate(block_coordi, block_addrs, block_masks);
+
+    // Customized IndexGet (generic version too slow)
+    voxel_block_coords =
+            core::Tensor({hashmap->Size(), 3}, core::Int32, device);
+    index_t *voxel_block_coord_ptr = voxel_block_coords.GetDataPtr<index_t>();
+    bool *block_masks_ptr = block_masks.GetDataPtr<bool>();
+    count[0] = 0;
+    core::ParallelFor(device, total_block_count,
+                      [=] OPEN3D_DEVICE(index_t workload_idx) {
+                          if (block_masks_ptr[workload_idx]) {
+                              index_t idx = OPEN3D_ATOMIC_ADD(count_ptr, 1);
+                              index_t offset_lhs = 3 * idx;
+                              index_t offset_rhs = 3 * workload_idx;
+                              voxel_block_coord_ptr[offset_lhs + 0] =
+                                      block_coordi_ptr[offset_rhs + 0];
+                              voxel_block_coord_ptr[offset_lhs + 1] =
+                                      block_coordi_ptr[offset_rhs + 1];
+                              voxel_block_coord_ptr[offset_lhs + 2] =
+                                      block_coordi_ptr[offset_rhs + 2];
+                          }
+                      });
+    OPEN3D_CUDA_CHECK(cudaDeviceSynchronize());
+}
 
 void UnseenFrustumDeepTouchCUDA(std::shared_ptr<core::HashMap> &hashmap,
                     const core::Tensor &depth,

@@ -153,6 +153,17 @@ public:
             float trunc_voxel_multiplier,
             float depth_std_times);
 
+
+    core::Tensor UnseenFrustumGetUniqueBlockCoordinatesPerception(
+            const Image &depth,
+            const Image &probabilities,
+            const core::Tensor &intrinsic,
+            const core::Tensor &extrinsic,
+            float depth_scale,
+            float depth_max,
+            float trunc_voxel_multiplier,
+            float depth_std_times);
+
     /// Obtain active block coordinates from a point cloud.
     core::Tensor GetUniqueBlockCoordinates(const PointCloud &pcd,
                                            float trunc_voxel_multiplier = 8.0);

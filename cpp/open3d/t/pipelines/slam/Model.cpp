@@ -149,6 +149,7 @@ void Model::DownIntegrate(const Frame& input_frame,
                       float weight_threshold,
                       float occupancy) {
     t::geometry::Image depth = input_frame.GetDataAsImage("depth");
+    t::geometry::Image probabilities = input_frame.GetDataAsImage("probabilities");
     core::Tensor intrinsic = input_frame.GetIntrinsics();
     core::Tensor extrinsic =
             t::geometry::InverseTransformation(GetCurrentFramePose());
@@ -168,8 +169,8 @@ void Model::DownIntegrate(const Frame& input_frame,
                               weight_threshold,
                               occupancy);
     */
-    frustum_block_coords_detections_ = voxel_grid_detections_.UnseenFrustumGetUniqueBlockCoordinates(
-            depth, intrinsic, extrinsic, depth_scale, depth_max,
+    frustum_block_coords_detections_ = voxel_grid_detections_.UnseenFrustumGetUniqueBlockCoordinatesPerception(
+            depth, probabilities, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier, depth_std_multiplier);
     voxel_grid_detections_.DownIntegrate(frustum_block_coords_detections_,
                               depth,

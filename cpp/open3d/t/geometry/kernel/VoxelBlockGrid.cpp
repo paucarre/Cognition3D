@@ -129,6 +129,33 @@ void UnseenFrustumDeepTouch(std::shared_ptr<core::HashMap> &hashmap,
     //}
 }
 
+void UnseenFrustumDeepTouchPerception(std::shared_ptr<core::HashMap> &hashmap,
+                    const core::Tensor &depth,
+                    const core::Tensor &probabilities,
+                    const core::Tensor &intrinsic,
+                    const core::Tensor &extrinsic,
+                    core::Tensor &voxel_block_coords,
+                    index_t voxel_grid_resolution,
+                    float voxel_size,
+                    float sdf_trunc,
+                    float depth_scale,
+                    float depth_max,
+                    index_t stride,
+                    float depth_std_times)  {
+    //if (hashmap->IsCPU()) {
+    //    DepthTouchCPU(hashmap, depth, intrinsic, extrinsic, voxel_block_coords,
+    //                  voxel_grid_resolution, voxel_size, sdf_trunc, depth_scale,
+    //                  depth_max, stride);
+    //} else if (hashmap->IsCUDA()) {
+    CUDA_CALL(UnseenFrustumDeepTouchPerceptionCUDA, hashmap, depth, probabilities, intrinsic, extrinsic,
+                voxel_block_coords, voxel_grid_resolution, voxel_size,
+                sdf_trunc, depth_scale, depth_max, stride, depth_std_times);
+    //} else {
+    //    utility::LogError("Unimplemented device");
+    //}
+}
+
+
 void GetVoxelCoordinatesAndFlattenedIndices(const core::Tensor& buf_indices,
                                             const core::Tensor& block_keys,
                                             core::Tensor& voxel_coords,

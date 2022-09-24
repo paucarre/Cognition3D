@@ -345,6 +345,48 @@ core::Tensor VoxelBlockGrid::UnseenFrustumGetUniqueBlockCoordinates(
 }
 
 
+
+core::Tensor VoxelBlockGrid::UnseenFrustumGetUniqueBlockCoordinatesPerception(
+        const Image &depth,
+        const Image &probabilities,
+        const core::Tensor &intrinsic,
+        const core::Tensor &extrinsic,
+        float depth_scale,
+        float depth_max,
+        float trunc_voxel_multiplier,
+        float depth_std_times) {
+    AssertInitialized();
+    CheckDepthTensor(depth.AsTensor());
+    CheckIntrinsicTensor(intrinsic);
+    CheckExtrinsicTensor(extrinsic);
+
+    const int64_t down_factor = 4;
+    const int64_t est_sample_multiplier = 4;
+    if (frustum_hashmap_ == nullptr) {
+        int64_t capacity = (depth.GetCols() / down_factor) *
+                           (depth.GetRows() / down_factor) *
+                           est_sample_multiplier;
+        frustum_hashmap_ = std::make_shared<core::HashMap>(
+                capacity, core::Int32, core::SizeVector{3}, core::Int32,
+                core::SizeVector{1}, block_hashmap_->GetDevice());
+    } else {
+        frustum_hashmap_->Clear();
+    }
+
+    core::Tensor block_coords;
+    kernel::voxel_grid::UnseenFrustumDeepTouchPerception(frustum_hashmap_, depth.AsTensor(),
+                                   probabilities.AsTensor(),
+                                   intrinsic, extrinsic, block_coords,
+                                   block_resolution_, voxel_size_,
+                                   voxel_size_ * trunc_voxel_multiplier,
+                                   depth_scale, depth_max, down_factor,
+                                   depth_std_times);
+
+    return block_coords;
+}
+
+
+
 core::Tensor VoxelBlockGrid::GetUniqueBlockCoordinates(
         const PointCloud &pcd, float trunc_voxel_multiplier) {
     AssertInitialized();
@@ -443,46 +485,57 @@ void VoxelBlockGrid::DownIntegrate(
     CheckBlockCoorinates(block_coords);
     int64_t key_len = block_coords.GetLength();
     if (key_len > 0) {
+        utility::LogInfo("Key length {}", key_len);
+        int64_t hashmap_size = block_hashmap_->Size();
+        utility::LogInfo("Hashmap size {}", hashmap_size);
         core::Tensor buf_indices, masks;
-        block_hashmap_->Activate(block_coords, buf_indices, masks);
+        //block_hashmap_->Activate(block_coords, buf_indices, masks);
         block_hashmap_->Find(block_coords, buf_indices, masks);
-        //block_hashmap_->Erase(block_coords);
-        core::Tensor block_keys = block_hashmap_->GetKeyTensor();
-        utility::LogInfo("Erase. Block Keys Shape {}", block_keys.GetShape());
-        TensorMap block_value_map =
-            ConstructTensorMap(*block_hashmap_, name_attr_map_);
-        kernel::voxel_grid::DownIntegrate(
-            depth.AsTensor(),
-            buf_indices,
-            block_keys,
-            block_value_map,
-            depth_intrinsic,
-            extrinsics,
-            block_resolution_,
-            voxel_size_,
-            sdf_trunc,
-            depth_scale,
-            depth_max,
-            down_integration_multiplier);
-        if(erase) {
-            core::Tensor empty_block_coords;
-            kernel::voxel_grid::Deallocate(
-                buf_indices,
-                block_keys,
-                block_value_map,
-                block_resolution_,
-                weight_threshold,
-                occupancy,
-                empty_block_coords);
-            utility::LogInfo("Erase. Buffer Indices Length {}", buf_indices.GetLength());
-            utility::LogInfo("Erase. Buffer Indices Shape {}", buf_indices.GetShape());
-            utility::LogInfo("Erase. Empty Block Keys Shape {}", empty_block_coords.GetShape());
-            core::Tensor output_masks;
-            if(empty_block_coords.GetLength() > 0) {
-                block_hashmap_->Erase(empty_block_coords, output_masks);
-            }
-            if(block_coords.GetLength() > 0) {
-                block_hashmap_->Erase(block_coords);
+        if(masks.GetLength() > 0 ){
+            utility::LogInfo("1-Down Integration Mask {}", buf_indices.GetShape());
+            core::Tensor filtered_buf_indices = buf_indices.IndexGet({masks});
+            if(filtered_buf_indices.GetLength() > 0 ){
+                utility::LogInfo("2-Down Integration Mask {} {}", filtered_buf_indices.GetLength(), masks.GetShape());
+                //utility::LogInfo("2-Down Integration Mask {}", masks.ToFlatVector<bool>());
+                //block_hashmap_->Erase(block_coords);
+                core::Tensor block_keys = block_hashmap_->GetKeyTensor();
+                utility::LogInfo("Erase. Block Keys Shape {}", block_keys.GetShape());
+                TensorMap block_value_map =
+                    ConstructTensorMap(*block_hashmap_, name_attr_map_);
+                kernel::voxel_grid::DownIntegrate(
+                    depth.AsTensor(),
+                    filtered_buf_indices,
+                    block_keys,
+                    block_value_map,
+                    depth_intrinsic,
+                    extrinsics,
+                    block_resolution_,
+                    voxel_size_,
+                    sdf_trunc,
+                    depth_scale,
+                    depth_max,
+                down_integration_multiplier);
+                if(erase) {
+                    core::Tensor empty_block_coords;
+                    kernel::voxel_grid::Deallocate(
+                        filtered_buf_indices,
+                        block_keys,
+                        block_value_map,
+                        block_resolution_,
+                        weight_threshold,
+                        occupancy,
+                        empty_block_coords);
+                    utility::LogInfo("Erase. Buffer Indices Length {}", buf_indices.GetLength());
+                    utility::LogInfo("Erase. Buffer Indices Shape {}", buf_indices.GetShape());
+                    utility::LogInfo("Erase. Empty Block Keys Shape {}", empty_block_coords.GetShape());
+                    core::Tensor output_masks;
+                    if(empty_block_coords.GetLength() > 0) {
+                        block_hashmap_->Erase(empty_block_coords, output_masks);
+                    }
+                    if(block_coords.GetLength() > 0) {
+                        block_hashmap_->Erase(block_coords);
+                    }
+                }
             }
         }
     }
