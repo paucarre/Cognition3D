@@ -121,7 +121,6 @@ void Model::Integrate(const Frame& input_frame,
     core::Tensor intrinsic = input_frame.GetIntrinsics();
     core::Tensor extrinsic =
             t::geometry::InverseTransformation(GetCurrentFramePose());
-    /*
     frustum_block_coords_ = voxel_grid_.GetUniqueBlockCoordinates(
             depth, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier);
@@ -129,7 +128,6 @@ void Model::Integrate(const Frame& input_frame,
                           intrinsic,
                           extrinsic, depth_scale, depth_max,
                           trunc_voxel_multiplier);
-    */
     frustum_block_coords_detections_ = voxel_grid_detections_.GetUniqueBlockCoordinatesPerception(
             depth, probabilities, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier, min_probability);
@@ -153,7 +151,6 @@ void Model::DownIntegrate(const Frame& input_frame,
     core::Tensor intrinsic = input_frame.GetIntrinsics();
     core::Tensor extrinsic =
             t::geometry::InverseTransformation(GetCurrentFramePose());
-    /*
     frustum_block_coords_ = voxel_grid_.UnseenFrustumGetUniqueBlockCoordinates(
             depth, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier, depth_std_multiplier);
@@ -168,7 +165,6 @@ void Model::DownIntegrate(const Frame& input_frame,
                               erase,
                               weight_threshold,
                               occupancy);
-    */
     frustum_block_coords_detections_ = voxel_grid_detections_.UnseenFrustumGetUniqueBlockCoordinatesPerception(
             depth, probabilities, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier, depth_std_multiplier);
@@ -194,11 +190,10 @@ std::vector<t::geometry::PointCloud> Model::ExtractDetectionPointCloud(float wei
                                               int estimated_number,
                                               int class_index,
                                               float minimum_probability){
-    //t::geometry::PointCloud background = voxel_grid_.ExtractPointCloud(weight_threshold, estimated_number);
+    t::geometry::PointCloud background = voxel_grid_.ExtractPointCloud(weight_threshold, estimated_number);
     std::vector<t::geometry::PointCloud> detection_pointclouds = voxel_grid_detections_.ExtractDetectionPointCloud(weight_threshold,
         estimated_number, class_index, minimum_probability);
-    //return std::vector<t::geometry::PointCloud>{detection_pointclouds[0], detection_pointclouds[1]};
-    return detection_pointclouds;
+    return std::vector<t::geometry::PointCloud>{std::move(background), std::move(detection_pointclouds[0])};
 }
 
 t::geometry::TriangleMesh Model::ExtractTriangleMesh(float weight_threshold,

@@ -489,15 +489,10 @@ void VoxelBlockGrid::DownIntegrate(
         int64_t hashmap_size = block_hashmap_->Size();
         utility::LogInfo("Hashmap size {}", hashmap_size);
         core::Tensor buf_indices, masks;
-        //block_hashmap_->Activate(block_coords, buf_indices, masks);
         block_hashmap_->Find(block_coords, buf_indices, masks);
         if(masks.GetLength() > 0 ){
-            utility::LogInfo("1-Down Integration Mask {}", buf_indices.GetShape());
             core::Tensor filtered_buf_indices = buf_indices.IndexGet({masks});
             if(filtered_buf_indices.GetLength() > 0 ){
-                utility::LogInfo("2-Down Integration Mask {} {}", filtered_buf_indices.GetLength(), masks.GetShape());
-                //utility::LogInfo("2-Down Integration Mask {}", masks.ToFlatVector<bool>());
-                //block_hashmap_->Erase(block_coords);
                 core::Tensor block_keys = block_hashmap_->GetKeyTensor();
                 utility::LogInfo("Erase. Block Keys Shape {}", block_keys.GetShape());
                 TensorMap block_value_map =
@@ -743,12 +738,6 @@ std::vector<PointCloud> VoxelBlockGrid::ExtractDetectionPointCloud(float weight_
                 objects_class_index,
                 background_class_index);
 
-        //utility::LogInfo("Shape of object indices {}", objects_class_index.GetShape());
-        //utility::LogInfo("Shape of backgrounds indices {}", background_class_index.GetShape());
-        //utility::LogInfo("Shape of   all  indices {}", points.GetShape());
-        //utility::LogInfo("Total count of cloudpoints {}", estimated_point_number);
-
-        //TODO: THIS CODE SEEMS TO CAUSE AN ILLEGAL ACCESS TO MEMORY !
         std::vector<core::Tensor> object_indices_selector{objects_class_index};
         PointCloud pcd_object = PointCloud(points.IndexGet(object_indices_selector));
         pcd_object.SetPointNormals(normals.IndexGet(object_indices_selector));
@@ -758,7 +747,8 @@ std::vector<PointCloud> VoxelBlockGrid::ExtractDetectionPointCloud(float weight_
 
         return std::vector<PointCloud>{pcd_object};
     } else {
-        return std::vector<PointCloud>{};
+        PointCloud pcd_object;
+        return std::vector<PointCloud>{pcd_object};
     }
 }
 
