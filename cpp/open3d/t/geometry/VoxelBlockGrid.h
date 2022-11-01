@@ -129,11 +129,13 @@ public:
     /// Note: these coordinates are not activated in the internal sparse voxel
     /// block. They need to be inserted in the hash map.
     core::Tensor GetUniqueBlockCoordinates(const Image &depth,
+                                           const Image &probabilities,
                                            const core::Tensor &intrinsic,
                                            const core::Tensor &extrinsic,
                                            float depth_scale = 1000.0f,
                                            float depth_max = 3.0f,
-                                           float trunc_voxel_multiplier = 8.0);
+                                           float trunc_voxel_multiplier = 8.0,
+                                           float min_probability = 0.1);
 
     core::Tensor GetUniqueBlockCoordinatesPerception(const Image &depth,
                                            const Image &probabilities,

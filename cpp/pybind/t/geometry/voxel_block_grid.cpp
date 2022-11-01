@@ -126,15 +126,15 @@ void pybind_voxel_block_grid(py::module& m) {
             "tensor.");
 
     vbg.def("compute_unique_block_coordinates",
-            py::overload_cast<const Image&, const core::Tensor&,
-                              const core::Tensor&, float, float, float>(
+            py::overload_cast<const Image&, const Image&, const core::Tensor&,
+                              const core::Tensor&, float, float, float, float>(
                     &VoxelBlockGrid::GetUniqueBlockCoordinates),
             "Get a (3, M) active block coordinates from a depth image, with "
             "potential duplicates removed."
             "Note: these coordinates are not activated in the internal sparse "
             "voxel block. They need to be inserted in the hash map.",
-            "depth"_a, "intrinsic"_a, "extrinsic"_a, "depth_scale"_a = 1000.0f,
-            "depth_max"_a = 3.0f, "trunc_voxel_multiplier"_a = 8.0);
+            "depth"_a, "probabilities"_a, "intrinsic"_a, "extrinsic"_a, "depth_scale"_a = 1000.0f,
+            "depth_max"_a = 3.0f, "trunc_voxel_multiplier"_a = 8.0f, "min_probability"_a = 0.7f);
 
     vbg.def("compute_unique_block_coordinates",
             py::overload_cast<const PointCloud&, float>(

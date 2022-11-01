@@ -124,6 +124,7 @@ void PointCloudTouchCUDA(std::shared_ptr<core::HashMap> &hashmap,
 
 void DepthTouchCUDA(std::shared_ptr<core::HashMap> &hashmap,
                     const core::Tensor &depth,
+                    const core::Tensor &probabilities,
                     const core::Tensor &intrinsic,
                     const core::Tensor &extrinsic,
                     core::Tensor &voxel_block_coords,
@@ -132,7 +133,8 @@ void DepthTouchCUDA(std::shared_ptr<core::HashMap> &hashmap,
                     float sdf_trunc,
                     float depth_scale,
                     float depth_max,
-                    index_t stride) {
+                    index_t stride,
+                    float min_probability) {
     core::Device device = depth.GetDevice();
     NDArrayIndexer depth_indexer(depth, 2);
     core::Tensor pose = t::geometry::InverseTransformation(extrinsic);

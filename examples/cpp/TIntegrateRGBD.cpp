@@ -155,9 +155,9 @@ int main(int argc, char* argv[]) {
         utility::Timer int_timer;
         int_timer.Start();
         core::Tensor frustum_block_coords =
-                voxel_grid.GetUniqueBlockCoordinates(depth, intrinsic_t,
+                voxel_grid.GetUniqueBlockCoordinates(depth, depth, intrinsic_t,
                                                      extrinsic_t, depth_scale,
-                                                     depth_max);
+                                                     depth_max, 0.7);
         voxel_grid.Integrate(frustum_block_coords, depth, color, intrinsic_t,
                              extrinsic_t);
         int_timer.Stop();

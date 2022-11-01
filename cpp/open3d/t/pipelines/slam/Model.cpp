@@ -122,7 +122,7 @@ void Model::Integrate(const Frame& input_frame,
     core::Tensor extrinsic =
             t::geometry::InverseTransformation(GetCurrentFramePose());
     frustum_block_coords_ = voxel_grid_.GetUniqueBlockCoordinates(
-            depth, intrinsic, extrinsic, depth_scale, depth_max,
+            depth, probabilities, intrinsic, extrinsic, depth_scale, depth_max,
             trunc_voxel_multiplier);
     voxel_grid_.Integrate(frustum_block_coords_, depth, color,
                           intrinsic,

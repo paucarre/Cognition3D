@@ -180,8 +180,8 @@ int main(int argc, char* argv[]) {
 
             core::Tensor frustum_block_coords =
                     voxel_grid.GetUniqueBlockCoordinates(
-                            rgbd_projected.depth_, intrinsic_t, extrinsic_t,
-                            depth_scale, depth_max);
+                            rgbd_projected.depth_, rgbd_projected.depth_, intrinsic_t, extrinsic_t,
+                            depth_scale, depth_max, 0.7);
 
             voxel_grid.Integrate(frustum_block_coords, rgbd_projected.depth_,
                                  rgbd_projected.color_, intrinsic_t,

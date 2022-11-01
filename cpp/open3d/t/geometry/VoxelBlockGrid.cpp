@@ -231,11 +231,13 @@ VoxelBlockGrid::GetVoxelCoordinatesAndFlattenedIndices(
 
 core::Tensor VoxelBlockGrid::GetUniqueBlockCoordinates(
         const Image &depth,
+        const Image &probabilities,
         const core::Tensor &intrinsic,
         const core::Tensor &extrinsic,
         float depth_scale,
         float depth_max,
-        float trunc_voxel_multiplier) {
+        float trunc_voxel_multiplier,
+        float min_probability) {
     AssertInitialized();
     CheckDepthTensor(depth.AsTensor());
     CheckIntrinsicTensor(intrinsic);
@@ -256,10 +258,12 @@ core::Tensor VoxelBlockGrid::GetUniqueBlockCoordinates(
 
     core::Tensor block_coords;
     kernel::voxel_grid::DepthTouch(frustum_hashmap_, depth.AsTensor(),
+                                   probabilities.AsTensor(),
                                    intrinsic, extrinsic, block_coords,
                                    block_resolution_, voxel_size_,
                                    voxel_size_ * trunc_voxel_multiplier,
-                                   depth_scale, depth_max, down_factor);
+                                   depth_scale, depth_max, down_factor,
+                                   min_probability);
 
     return block_coords;
 }

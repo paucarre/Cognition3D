@@ -158,6 +158,10 @@ void pybind_slam_model(py::module &m) {
             "Get the underlying hash map from 3D coordinates to voxel blocks.");
     model.def_readwrite("voxel_grid", &Model::voxel_grid_,
                         "Get the maintained VoxelBlockGrid.");
+
+    model.def_readwrite("voxel_grid_detections", &Model::voxel_grid_detections_,
+                        "Get the maintained Prediction VoxelBlockGrid.");
+
     model.def_readwrite("transformation_frame_to_world",
                         &Model::T_frame_to_world_,
                         "Get the 4x4 transformation matrix from the current "

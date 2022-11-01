@@ -63,6 +63,7 @@ void PointCloudTouch(std::shared_ptr<core::HashMap>& hashmap,
  */
 void DepthTouch(std::shared_ptr<core::HashMap>& hashmap,
                 const core::Tensor& depth,
+                const core::Tensor& probabilities,
                 const core::Tensor& intrinsic,
                 const core::Tensor& extrinsic,
                 core::Tensor& voxel_block_coords,
@@ -71,15 +72,16 @@ void DepthTouch(std::shared_ptr<core::HashMap>& hashmap,
                 float sdf_trunc,
                 float depth_scale,
                 float depth_max,
-                index_t stride) {
+                index_t stride,
+                float min_probability) {
     if (hashmap->IsCPU()) {
         DepthTouchCPU(hashmap, depth, intrinsic, extrinsic, voxel_block_coords,
                       voxel_grid_resolution, voxel_size, sdf_trunc, depth_scale,
                       depth_max, stride);
     } else if (hashmap->IsCUDA()) {
-        CUDA_CALL(DepthTouchCUDA, hashmap, depth, intrinsic, extrinsic,
+        CUDA_CALL(DepthTouchCUDA, hashmap, depth, probabilities, intrinsic, extrinsic,
                   voxel_block_coords, voxel_grid_resolution, voxel_size,
-                  sdf_trunc, depth_scale, depth_max, stride);
+                  sdf_trunc, depth_scale, depth_max, stride, min_probability);
     } else {
         utility::LogError("Unimplemented device");
     }

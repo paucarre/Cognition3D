@@ -49,6 +49,7 @@ void PointCloudTouch(std::shared_ptr<core::HashMap>& hashmap,
 
 void DepthTouch(std::shared_ptr<core::HashMap>& hashmap,
                 const core::Tensor& depth,
+                const core::Tensor& probabilities,
                 const core::Tensor& intrinsic,
                 const core::Tensor& extrinsic,
                 core::Tensor& voxel_block_coords,
@@ -57,7 +58,8 @@ void DepthTouch(std::shared_ptr<core::HashMap>& hashmap,
                 float sdf_trunc,
                 float depth_scale,
                 float depth_max,
-                index_t stride);
+                index_t stride,
+                float min_probability);
 
 void DepthTouchPerception(std::shared_ptr<core::HashMap>& hashmap,
                 const core::Tensor& depth,
@@ -402,6 +404,7 @@ void PointCloudTouchCUDA(std::shared_ptr<core::HashMap>& hashmap,
 
 void DepthTouchCUDA(std::shared_ptr<core::HashMap>& hashmap,
                     const core::Tensor& depth,
+                    const core::Tensor& probabilities,
                     const core::Tensor& intrinsic,
                     const core::Tensor& extrinsic,
                     core::Tensor& voxel_block_coords,
@@ -410,7 +413,8 @@ void DepthTouchCUDA(std::shared_ptr<core::HashMap>& hashmap,
                     float sdf_trunc,
                     float depth_scale,
                     float depth_max,
-                    index_t stride);
+                    index_t stride,
+                    float min_probability);
 
 void DepthTouchPerceptionCUDA(std::shared_ptr<core::HashMap>& hashmap,
                     const core::Tensor& depth,
